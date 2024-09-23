@@ -40,8 +40,8 @@ if __name__ == "__main__":
     
     # Calculer les embeddings
     embeddings = compute_embeddings(texts, model)
-    dimension= 768
     # Créer et sauvegarder l'index FAISS
+    dimension = model.get_sentence_embedding_dimension()
     index = create_faiss_index(embeddings,dimension)
     save_faiss_index(index, faiss_index_file)
     
