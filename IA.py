@@ -1,41 +1,20 @@
-from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from transformers import GPT2Tokenizer, GPT2Model
 import torch
 import sys
+import faiss
+import numpy as np
+
 tokenizer = GPT2Tokenizer.from_pretrained("af1tang/personaGPT")
-model = GPT2LMHeadModel.from_pretrained("af1tang/personaGPT")
-#if torch.cuda.is_available():
-#    model = model.cuda()
+model = GPT2Model.from_pretrained("af1tang/personaGPT")
+
+#Se met en mode GPU si disponble
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = model.to(device)
-
-## utility functions ##
-#flatten = lambda l: [item for sublist in l for item in sublist]
 
 def flatten(lst):
     return [item for sublist in lst for item in sublist]
 
-
-def to_data(x):
-    if torch.cuda.is_available():
-        x = x.cpu()
-    return x.data.numpy()
-
-def to_var(x):
-    if not torch.is_tensor(x):
-        x = torch.Tensor(x)
-    if torch.cuda.is_available():
-        x = x.cuda()
-    return x
-
-def display_dialog_history(dialog_hx):
-    for j, line in enumerate(dialog_hx):
-        msg = tokenizer.decode(line,clean_up_tokenization_spaces=False)
-        if j %2 == 0:
-            print(">> User: "+ msg)
-        else:
-            print("> Your Npc: "+msg)
-            print()
-
+#Menu du niveau de créativité
 lvl = -1
 while lvl not in [0, 1, 2, 3]:
     lvl = int(input("What level of creativity you want to allow your npc to be?\n1 - Creative \n2 - Normal \n3 - Precise \n0 - Quit\n"))
@@ -44,7 +23,7 @@ if lvl == 0:
     print("Exiting...")
     sys.exit()
 
-# Define generation parameters based on selected level
+#Niveaux
 if lvl == 1:
     top_k = 50
     top_p = 0.8
@@ -80,17 +59,98 @@ def generate_next(bot_input_ids, top_k, top_p,temperature,max_length=1000, do_sa
     msg = to_data(full_msg.detach()[0])[bot_input_ids.shape[-1]:]
     return msg
 
+#Utility
+# Convertir en données NumPy
+def to_data(x):
+    if torch.cuda.is_available():
+        x = x.cpu()
+    return x.data.numpy()
+
+# Convertir en variable Tensor
+def to_var(x):
+    if not torch.is_tensor(x):
+        x = torch.Tensor(x)
+    if torch.cuda.is_available():
+        x = x.cuda()
+    return x
+
+def display_dialog_history(dialog_hx):
+    for j, line in enumerate(dialog_hx):
+        msg = tokenizer.decode(line,clean_up_tokenization_spaces=False)
+        if j %2 == 0:
+            print(">> User: "+ msg)
+        else:
+            print("> Your Npc: "+msg)
+            print()
+
+#FAISS
+
+# Charger l'index FAISS
+def load_faiss_index(index_file):
+    index = faiss.read_index(index_file)
+    return index
+
+# Rechercher les contextes pertinents en fonction du prompt utilisateur
+def search_index(index, query, model, texts, top_k=5):
+    # Encode the query to get the embeddings
+    inputs = tokenizer(query, return_tensors='pt').to(device)  # Tokenisation
+    with torch.no_grad():  # Désactiver le gradient pour la recherche
+        query_embedding = model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()  # Utiliser la sortie cachée moyenne
+    distances, indices = index.search(query_embedding, top_k)
+    results = [texts[i] for i in indices[0]]
+    return results, distances[0]
 
 
-#============================pour donner des personnalités depuis le terminal===================#
-personas = []
-n_facts = int(input("How many personality facts do you want to give? Enter -1 for Default(3) "))
-if n_facts == -1:
-    n_facts=3
-for i in range(n_facts):
-    response = input(">> Fact %d: "%(i+1))+ tokenizer.eos_token
-    personas.append(response)
-personas = tokenizer.encode(''.join(['<|p2|>'] + personas + ['<|sep|>'] + ['<|start|>']))
+
+# Main
+if __name__ == "__main__":
+    #Récup^ère le fichier
+    faiss_index_file = "faiss_index.index"
+    # Charger l'index FAISS
+    index = load_faiss_index(faiss_index_file)
+
+    contexts = []  # Combiner personas et texts
+    n_contexts = int(input("How many personality or contextual facts do you want to provide? Enter -1 for Default(3): "))
+    if n_contexts == -1:
+        n_contexts = 3
+    for i in range(n_contexts):
+        context = input(">> Context/Fact %d: " % (i + 1))
+        contexts.append(context)
+
+    dialog_hx = []  # Initialiser l'historique des dialogues
+
+    while True:
+        user_inp = input(">> User: ")
+        
+        # Recherche de contextes pertinents
+        results, _ = search_index(index, user_inp, model, contexts)
+        context = ' '.join(results)  # Combine les résultats en une seule chaîne
+        
+        # Encode l'entrée de l'utilisateur avec le contexte
+        bot_input_ids = to_var([contexts + flatten(dialog_hx) + tokenizer.encode(context)]).long()
+        
+        # Générer une réponse
+        msg = generate_next(bot_input_ids, top_k, top_p, temperature)
+        dialog_hx.append(msg)
+        
+        print("> Your Npc: {}".format(tokenizer.decode(msg, skip_special_tokens=True, clean_up_tokenization_spaces=False)))
+
+
+
+
+
+ #utility
+#deprecated version
+#flatten = lambda l: [item for sublist in l for item in sublist]
+
+#deprecated
+#if torch.cuda.is_available():
+#    model = model.cuda()
+
+
+
+
+
 #==============================================================================================#
 
 #============================pour hardcoder des personnalités==================================#
@@ -103,19 +163,13 @@ personas = tokenizer.encode(''.join(['<|p2|>'] + personas + ['<|sep|>'] + ['<|st
 
 
 #==================================conversation sur X tours====================================#
-dialog_hx = []
-n_dialogs = int(input("How many prompts? Enter -1 for Default(8) "))
-if n_dialogs == -1:
-    n_dialogs=8
-    
-for step in range(n_dialogs):
-    # encode the user input
-    user_inp = tokenizer.encode(input(">> User: ") + tokenizer.eos_token)
-    # append to the chat history
-    dialog_hx.append(user_inp)
-        
-    # generated a response while limiting the total chat history to 1000 tokens, 
-    bot_input_ids = to_var([personas + flatten(dialog_hx)]).long()
-    msg = generate_next(bot_input_ids,top_k,top_p,temperature)
-    dialog_hx.append(msg)
-    print("> Your Npc: {}".format(tokenizer.decode(msg, skip_special_tokens=True, clean_up_tokenization_spaces=False)))
+
+
+
+#pour travailler en Local   
+#tokenizer = GPT2Tokenizer.from_pretrained("./tokenizer")
+#model = GPT2LMHeadModel.from_pretrained("./model")
+
+# Sauvegarder le tokenizer et le modèle localement
+#tokenizer.save_pretrained('./local_model/tokenizer')  # Sauvegarde le tokenizer
+#model.save_pretrained('./local_model/model')  # Sauvegarde le modèle
