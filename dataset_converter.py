@@ -38,7 +38,8 @@ if __name__ == "__main__":
     
     faiss_index_file = "faiss_index.index" #nom du fichier faiss qui va contenir les vecteurs
     text_field = "Text"  # Champ contenant le texte cible du dataset. ici text mais on aurait pu choisir Objective ou Title qui sont des champs correctes pour ce dataset
-    texts = load_json_dataset
+    data_file="npc-dataset.json"
+    texts = load_json_dataset(data_file,text_field)
     
     # Calculer les embeddings
     embeddings = compute_embeddings(texts, embedding_model, batch_size=32)
