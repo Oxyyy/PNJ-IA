@@ -3,19 +3,25 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from datasets import load_dataset 
 
+embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')  # Modèle d'embedding léger
+
 # Charger le dataset depuis HuggingFace
 def load_huggingface_dataset(dataset_name, split, text_field): 
     dataset = load_dataset(dataset_name, split=split)
     texts = dataset[text_field]  
-    return texts
+    return [text for text in texts if text] #sécurité pour avoir bien un rendu (return texts marche très bien aussi mais ça évite les nones ou vide)
 
 # Transformer le dataset en embeddings
-def compute_embeddings(texts, model): #Amélioration possible avec l'utilisation d'un batch_size mais pour l'instant ignoré car nécessite d'être calculé selon la taille de l'embedding + Risque d'erreur d'allocation
-    embeddings = model.encode(texts, convert_to_tensor=False)
-    return np.array(embeddings)
+def compute_embeddings(texts, embedding_model, batch_size=32): 
+    embeddings = []
+    for start_idx in range(0, len(texts), batch_size):
+        batch = texts[start_idx:start_idx + batch_size]
+        batch_embeddings = embedding_model.encode(batch, convert_to_tensor=False)
+        embeddings.append(batch_embeddings)
+    return np.vstack(embeddings)
 
 # Créer un index FAISS
-def create_faiss_index(embeddings, dimension):
+def create_faiss_index(embeddings, dimension=384):
     index = faiss.IndexFlatL2(dimension)  # Index pour la recherche L2 (euclidienne)
     index.add(embeddings)
     return index
@@ -32,17 +38,14 @@ if __name__ == "__main__":
     text_field = "Text"  # Champ contenant le texte cible du dataset. ici text mais on aurait pu choisir Objective ou Title qui sont des champs correctes pour ce dataset 
     split = "train"  # Choix du split. Ici seulement train est possible
     
-    # Charger le modèle SentenceTransformer
-    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')  # Modèle d'embedding léger
-    
     # Charger et traiter le dataset depuis Hugging Face
     texts = load_huggingface_dataset(dataset_name, split, text_field)
     
     # Calculer les embeddings
-    embeddings = compute_embeddings(texts, model)
+    embeddings = compute_embeddings(texts, embedding_model, batch_size=32)
+    
     # Créer et sauvegarder l'index FAISS
-    dimension = model.get_sentence_embedding_dimension()
-    index = create_faiss_index(embeddings,dimension)
+    index = create_faiss_index(embeddings,dimension=384) #dimension fixé par all-MiniLM-L6-v2
     save_faiss_index(index, faiss_index_file)
     
     print(f"Index FAISS sauvegardé dans {faiss_index_file}")
