@@ -22,6 +22,6 @@ liste des installs à faire une fois dans l'environnement :
 
 #### pip install faiss-cpu sentence-transformers datasets tf-keras transformers torch
 
-/!\
+###ATTENTION
 Lors de création d'un faiss le code peut mettre 3 min à s'exécuter.
 
