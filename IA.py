@@ -29,12 +29,12 @@ if lvl == 0:
 if lvl == 1:
     top_k = 50
     top_p = 0.8
-    temperature = 2
+    temperature = 2.0
     print("NPC set to Creative level.")
 elif lvl == 2:
     top_k = 20
     top_p = 0.9
-    temperature = 1
+    temperature = 1.0
     print("NPC set to Normal level.")
 elif lvl == 3:
     top_k = 6
@@ -58,7 +58,7 @@ def generate_next(bot_input_ids, top_k, top_p,temperature,max_length=1000, do_sa
         pad_token_id=pad_token
     )
 
-    msg = tokenizer.decode(full_msg[0], skip_special_tokens=True)
+    msg = tokenizer.decode(full_msg[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
     return msg
 
 #Utility
@@ -78,7 +78,7 @@ def to_var(x):
 
 def display_dialog_history(dialog_hx):
     for j, line in enumerate(dialog_hx):
-        msg = tokenizer.decode(line,clean_up_tokenization_spaces=False)
+        msg = tokenizer.decode(line,clean_up_tokenization_spaces=True)
         if j %2 == 0:
             print(">> User: "+ msg)
         else:
@@ -132,16 +132,18 @@ if __name__ == "__main__":
 
         # Encoder l'entrée de l'utilisateur avec le contexte
         if len(dialog_hx) == 0:
-            full_input = contexts + [user_inp]
+            full_input = ['<CONTEXT> ' + ''.join(contexts)] + ['<USER> ' + user_inp]
         else:
-            full_input = flatten(dialog_hx) + [user_inp]
-
-        bot_input_ids = tokenizer.encode(' '.join(full_input), return_tensors='pt').to(device)
+            full_input = flatten(['<USER> ' + user_inp] + ['<NPC> ' + response for response in dialog_hx])
+    
+        bot_input_ids = tokenizer.encode(''.join(full_input), return_tensors='pt').to(device)
         # Générer une réponse
         msg = generate_next(bot_input_ids, top_k, top_p, temperature)
         dialog_hx.append(msg)
 
         print("> Your Npc: {}".format(msg))
+
+
 
 
 
