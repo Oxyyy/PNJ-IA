@@ -2,13 +2,13 @@
 
 Projet Generative IA
 
-## prérequis avoir python
+#### prérequis avoir python
 
 ## Installation pour le bon fonctionnement des codes \*.py :
 
 Commande pour crée un environnement pour sandboxer correctement les installs par pip
 
-### python -m venv .venv
+#### python -m venv .venv
 
 Pour lancer l'environnement python :
 
