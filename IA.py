@@ -16,32 +16,6 @@ model = model.to(device)
 def flatten(lst):
     return [item for sublist in lst for item in sublist]
 
-#Menu du niveau de créativité
-lvl = -1
-while lvl not in [0, 1, 2, 3]:
-    lvl = int(input("What level of creativity you want to allow your npc to be?\n1 - Creative \n2 - Normal \n3 - Precise \n0 - Quit\n"))
-
-if lvl == 0:
-    print("Exiting...")
-    sys.exit()
-
-#Niveaux
-if lvl == 1:
-    top_k = 50
-    top_p = 0.8
-    temperature = 2.0
-    print("NPC set to Creative level.")
-elif lvl == 2:
-    top_k = 20
-    top_p = 0.9
-    temperature = 1.0
-    print("NPC set to Normal level.")
-elif lvl == 3:
-    top_k = 6
-    top_p = 0.95
-    temperature = 0.7
-    print("NPC set to Precise level.")
-
 def generate_next(bot_input_ids, top_k, top_p,temperature,max_length=1000, do_sample=True, pad_token=tokenizer.eos_token_id):
     # Create an attention mask
     attention_mask = bot_input_ids.ne(tokenizer.pad_token_id).long()
@@ -109,6 +83,30 @@ def search_index(index, query, embedding_model, texts, top_k=5):
 
 # Main
 if __name__ == "__main__":
+    #Menu du niveau de créativité
+    lvl = -1
+    while lvl not in [0, 1, 2, 3]:
+        lvl = int(input("What level of creativity you want to allow your npc to be?\n1 - Creative \n2 - Normal \n3 - Precise \n0 - Quit\n"))
+    #Niveaux
+    if lvl == 0:
+        print("Exiting...")
+        sys.exit()
+    if lvl == 1:
+        top_k = 50
+        top_p = 0.8
+        temperature = 2.0
+        print("NPC set to Creative level.")
+    elif lvl == 2:
+        top_k = 20
+        top_p = 0.9
+        temperature = 1.0
+        print("NPC set to Normal level.")
+    elif lvl == 3:
+        top_k = 6
+        top_p = 0.95
+        temperature = 0.7
+        print("NPC set to Precise level.")
+    
     #Récupère le fichier
     faiss_index_file = "faiss_index.index"
     # Charger l'index FAISS
@@ -142,6 +140,7 @@ if __name__ == "__main__":
         dialog_hx.append(msg)
 
         print("> Your Npc: {}".format(msg))
+
 
 
 
