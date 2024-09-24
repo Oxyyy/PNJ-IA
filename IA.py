@@ -1,11 +1,13 @@
-from transformers import GPT2Tokenizer, GPT2Model
+from transformers import GPT2Tokenizer, GPT2LMHeadModel
+from sentence_transformers import SentenceTransformer
 import torch
 import sys
 import faiss
 import numpy as np
 
 tokenizer = GPT2Tokenizer.from_pretrained("af1tang/personaGPT")
-model = GPT2Model.from_pretrained("af1tang/personaGPT")
+model = GPT2LMHeadModel.from_pretrained("af1tang/personaGPT")
+embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
 #Se met en mode GPU si disponble
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -30,14 +32,14 @@ if lvl == 1:
     temperature = 2
     print("NPC set to Creative level.")
 elif lvl == 2:
-    top_k = 10
+    top_k = 20
     top_p = 0.9
     temperature = 1
     print("NPC set to Normal level.")
 elif lvl == 3:
     top_k = 6
     top_p = 0.95
-    temperature = 0.5
+    temperature = 0.7
     print("NPC set to Precise level.")
 
 def generate_next(bot_input_ids, top_k, top_p,temperature,max_length=1000, do_sample=True, pad_token=tokenizer.eos_token_id):
@@ -56,7 +58,7 @@ def generate_next(bot_input_ids, top_k, top_p,temperature,max_length=1000, do_sa
         pad_token_id=pad_token
     )
 
-    msg = to_data(full_msg.detach()[0])[bot_input_ids.shape[-1]:]
+    msg = tokenizer.decode(full_msg[0], skip_special_tokens=True)
     return msg
 
 #Utility
@@ -84,32 +86,35 @@ def display_dialog_history(dialog_hx):
             print()
 
 #FAISS
-
 # Charger l'index FAISS
 def load_faiss_index(index_file):
     index = faiss.read_index(index_file)
     return index
 
 # Rechercher les contextes pertinents en fonction du prompt utilisateur
-def search_index(index, query, model, texts, top_k=5):
-    # Encode the query to get the embeddings
-    inputs = tokenizer(query, return_tensors='pt').to(device)  # Tokenisation
-    with torch.no_grad():  # Désactiver le gradient pour la recherche
-        query_embedding = model(**inputs).last_hidden_state.mean(dim=1).cpu().numpy()  # Utiliser la sortie cachée moyenne
-    distances, indices = index.search(query_embedding, top_k)
-    results = [texts[i] for i in indices[0]]
+def search_index(index, query, embedding_model, texts, top_k=5):
+     # Encode la querry pour obtenir l'embedding
+    query_embedding = embedding_model.encode([query])  
+    distances, indices = index.search(np.array(query_embedding), top_k)
+    
+    # Vérifie si les indices existent ou s'il y a une relation
+    if len(indices) == 0 or len(indices[0]) == 0:
+        print("No results found for the query.")
+        return [], []
+    
+    # Récupère le texte si un résultat est trouvé
+    results = [texts[i] for i in indices[0] if i < len(texts)]  # Ensure index is within bounds
     return results, distances[0]
-
 
 
 # Main
 if __name__ == "__main__":
-    #Récup^ère le fichier
+    #Récupère le fichier
     faiss_index_file = "faiss_index.index"
     # Charger l'index FAISS
     index = load_faiss_index(faiss_index_file)
 
-    contexts = []  # Combiner personas et texts
+    contexts = [] 
     n_contexts = int(input("How many personality or contextual facts do you want to provide? Enter -1 for Default(3): "))
     if n_contexts == -1:
         n_contexts = 3
@@ -121,21 +126,22 @@ if __name__ == "__main__":
 
     while True:
         user_inp = input(">> User: ")
-        
-        # Recherche de contextes pertinents
-        results, _ = search_index(index, user_inp, model, contexts)
-        context = ' '.join(results)  # Combine les résultats en une seule chaîne
-        
-        # Encode l'entrée de l'utilisateur avec le contexte
-        bot_input_ids = to_var([contexts + flatten(dialog_hx) + tokenizer.encode(context)]).long()
-        
+        # Recherche de contextes pertinents et combine en une seule chaîne
+        results, _ = search_index(index, user_inp, embedding_model, contexts, top_k=5)
+        context = ' '.join(results)
+
+        # Encoder l'entrée de l'utilisateur avec le contexte
+        if len(dialog_hx) == 0:
+            full_input = contexts + [user_inp]
+        else:
+            full_input = flatten(dialog_hx) + [user_inp]
+
+        bot_input_ids = tokenizer.encode(' '.join(full_input), return_tensors='pt').to(device)
         # Générer une réponse
         msg = generate_next(bot_input_ids, top_k, top_p, temperature)
         dialog_hx.append(msg)
-        
-        print("> Your Npc: {}".format(tokenizer.decode(msg, skip_special_tokens=True, clean_up_tokenization_spaces=False)))
 
-
+        print("> Your Npc: {}".format(msg))
 
 
 
