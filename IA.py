@@ -50,11 +50,7 @@ def generate_next(bot_input_ids, top_k, top_p, temperature, max_length=1000, do_
         pad_token_id=pad_token
     )
 
-    # Vérifier le contenu de full_msg
-    print(f"Full message output (raw): {full_msg}")
-
-    # Décoder en s'assurant que nous avons une liste
-    msg = tokenizer.decode(full_msg[0].tolist(), skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    msg = full_msg[0].tolist()
     return msg
 
 #Utility
@@ -81,25 +77,29 @@ def display_dialog_history(dialog_hx):
             print("> Your Npc: "+msg)
             print()
 
-def query_personality_faiss(short_persona, personality_index, k=5):
-    # Convertir la description courte en vecteur
-    short_persona_embedding = embedding_model.encode([short_persona])   # Fonction qui convertit le texte en vecteur
-    # Rechercher dans l'index FAISS des personnalités
-    distances, indices = personality_index.search(short_persona_embedding, k)
-    
-    # Récupérer les traits de personnalité correspondants
-    retrieved_personality_data = list(set([df['Text'][idx] for idx in indices[0]]))  # Assurez-vous que retrieve_from_index est défini
-    return retrieved_personality_data
+#===============
 
-def query_interaction_faiss(user_query, interaction_index, k=5):
-    # Convertir la requête utilisateur en vecteur
-    user_query_embedding = embedding_model.encode([user_query])  # Fonction qui convertit le texte en vecteur
-    # Rechercher dans l'index FAISS des interactions
-    distances, indices = interaction_index.search(user_query_embedding, k)
+def query_reference_dialogs_faiss(query, index, k=20):
+# Convertir la description courte en vecteur
+    query_embedding = embedding_model.encode([query])   # Fonction qui convertit le texte en vecteur
     
-    # Récupérer les dialogues ou interactions correspondants
-    retrieved_interaction_data = list(set([df['Text'][idx] for idx in indices[0]]))  # Assurez-vous que retrieve_from_index est défini
-    return retrieved_interaction_data
+    # Rechercher dans l'index FAISS en utilisant l'embedding
+    distances, indices = index.search(query_embedding, k)
+    
+    # Récupérer les dialogues correspondants des champs 'Text', 'Objective' et 'Title'
+    retrieved_reference_dialogs_data = []
+    for idx in indices[0]:
+        # Ajouter les valeurs des différents champs à la liste
+        if idx < len(df):  # Vérifier que l'index est valide
+            retrieved_reference_dialogs_data.append(df['Text'][idx])
+            retrieved_reference_dialogs_data.append(df['Objective'][idx])
+            retrieved_reference_dialogs_data.append(df['Title'][idx])
+
+    # Utiliser un set pour éliminer les doublons, si nécessaire
+    retrieved_reference_dialogs_data = list(set(retrieved_reference_dialogs_data))
+
+    print(retrieved_reference_dialogs_data)
+    return retrieved_reference_dialogs_data
 
 
 # Main
@@ -128,54 +128,62 @@ if __name__ == "__main__":
         temperature = 0.7
         print("NPC set to Precise level.")
 
-    # get personality traits for the conversation
-    personas = []
-    # L'utilisateur donne une brève description de la personnalité du PNJ
-    short_persona = input(">> Donne une brève description du PNJ (par ex. 'marchand avide et suspicieux'): ") + tokenizer.eos_token
-    # Interroger FAISS pour récupérer des traits de personnalité
-    #retrieved_personality_data = query_personality_faiss(short_persona, personality_index)  # faiss_personality_index est ton index FAISS des personnalités
-    #retrieved_personality = ' '.join(retrieved_personality_data)  # Combiner les résultats en une seule chaîne de caractères
-
-    # Afficher les résultats récupérés pour information
-    #print(f"Retrieved personality traits from FAISS: {retrieved_personality}")
-
-    # Combiner la description initiale avec les résultats de FAISS pour créer une personnalité complète
-    #complete_personality = short_persona + " " + retrieved_personality + tokenizer.eos_token
-
-    # Encoder la personnalité complète
-    #personas = tokenizer.encode(''.join(['<|p2|>'] + [complete_personality] + ['<|sep|>'] + ['<|start|>']))
-    personas.append(short_persona)
-    personas = tokenizer.encode(''.join(['<|p2|>'] + personas + ['<|sep|>'] + ['<|start|>']))
-
     dialog_hx = []  # Initialiser l'historique des dialogues
 
+    short_persona = input("Describe the personality of the NPC : (ex: 'greedy and suspicious merchent')\n>> ")
+    name=("How do you want to name your NPC (ex: 'Lucas')\n>>")
+    emotion = input("How your NPC is feeling ? (ex: 'Sad,Stressed,Happy')\n>> ") 
+    context = input("What is the context of the actual situation ? (ex: 'He sells potions in a black market')\n>> ") 
+    action = input("How should act or is acting the NPC ? (ex: 'he must be distrustful of new clients')\n>> ") 
+    time_context = input("In which environnement does the NPC evolve (ex : 'It is night in the village, and most people are asleep.')")
+
+    query = f"{short_persona} {name} {emotion} {context} {action} {time_context}"
+
+    # ---- Ajout de la partie RAG pour interroger le dataset d'interactions ----
+    retrieved_interaction_data = query_reference_dialogs_faiss(query, interaction_index)  # faiss_interaction_index est ton index FAISS des interactions
+    related_dialogs = ' '.join(retrieved_interaction_data)  # Combiner les résultats en une seule chaîne de caractères
+        
+    combined_input = (
+    f"Here is the name of the NPC you are playing : <|character_name|>{name}. "
+    f"Here is the personality NPC you are playing : <|p2|>{short_persona}. "
+    f"Here is how the NPC you are playing feels : <|emotion|>{emotion}. "
+    f"Here is how the NPC you are playing need to act :<|action|>{action}. "
+    f"Here is in what situation the NPC you are playing actually he is : <|context|>{context}. "
+    f"Here is in which environnement NPC you are playing is evolving : <|time|>{time_context}. "
+    )
+    if related_dialogs:  
+        combined_input += f"Here are some more realistic NPC dialogues from which you need to inspirate yourself based on the personality you were given: <|ref|> {related_dialogs}. Now before starting to play your role great the user neutraly and then start playing your character"
+
+
+    bot_input_ids = to_var([combined_input]).long()
+    # Générer la réponse avec le modèle PersonaGPT
+    msg = generate_next(bot_input_ids, top_k, top_p, temperature)
+    dialog_hx.append(msg)
+    print("NPC : {}".format(tokenizer.decode(msg, skip_special_tokens=True)))
+
     while True:
-        user_inp = input(">> User: ") + tokenizer.eos_token
+        print("exit or quit to stop the conversation")
+        user_inp = "<|start|>" +  input(">> User: ") + tokenizer.eos_token
+
+        if user_inp.lower() in ['exit', 'quit']:
+            print("Exiting...")
+            break
+
         user_inp_encoded = tokenizer.encode(user_inp)
     
         # Append to the chat history
         dialog_hx.append(user_inp_encoded)
 
-        # ---- Ajout de la partie RAG pour interroger le dataset d'interactions ----
-        # Utiliser la requête de l'utilisateur pour interroger FAISS
-        retrieved_interaction_data = query_interaction_faiss(user_inp, interaction_index)  # faiss_interaction_index est ton index FAISS des interactions
-        retrieved_context = ' '.join(retrieved_interaction_data)  # Combiner les résultats en une seule chaîne de caractères
-
-        # Afficher le contexte récupéré pour information
-        #print(f"Retrieved context from FAISS: {retrieved_context}")
-
-        # Ajouter les résultats FAISS au contexte du dialogue
-        personas_and_context = personas + tokenizer.encode(retrieved_context + tokenizer.eos_token)
-
         # Limiter l'historique de la conversation à 1000 tokens
-        bot_input_ids = to_var([personas_and_context + flatten(dialog_hx)]).long()
+        bot_input_ids = to_var([user_inp_encoded+ flatten(dialog_hx)]).long()
     
         # Générer la réponse avec le modèle PersonaGPT
         msg = generate_next(bot_input_ids, top_k, top_p, temperature)
         dialog_hx.append(msg)
     
         # Afficher la réponse
-        print("Bot: {}".format(tokenizer.decode(msg, skip_special_tokens=True)))
+        print("NPC : {}".format(tokenizer.decode(msg, skip_special_tokens=True)))
+
 
 
 
@@ -190,6 +198,19 @@ if __name__ == "__main__":
 #    model = model.cuda()
 
 
+#=======================
+
+#def query_interaction_faiss(user_query, interaction_index, k=5):
+    # Convertir la requête utilisateur en vecteur
+#    user_query_embedding = embedding_model.encode([user_query])  # Fonction qui convertit le texte en vecteur
+    # Rechercher dans l'index FAISS des interactions
+#    distances, indices = interaction_index.search(user_query_embedding, k)
+    
+    # Récupérer les dialogues ou interactions correspondants
+#
+#    retrieved_interaction_data = list(set([df['Text'][idx] for idx in indices[0]]))  # Assurez-vous que retrieve_from_index est défini
+#   print(retrieved_interaction_data)
+#   return retrieved_interaction_data
 
 
 
@@ -216,3 +237,29 @@ if __name__ == "__main__":
 #tokenizer.save_pretrained('./local_model/tokenizer')  # Sauvegarde le tokenizer
 #model.save_pretrained('./local_model/model')  # Sauvegarde le modèle
 
+
+
+#code pour utiliser un autre data set de personnalité 
+# Interroger FAISS pour récupérer des traits de personnalité
+    #retrieved_personality_data = query_personality_faiss(short_persona, personality_index)  # faiss_personality_index est ton index FAISS des personnalités
+    #retrieved_personality = ' '.join(retrieved_personality_data)  # Combiner les résultats en une seule chaîne de caractères
+
+    # Afficher les résultats récupérés pour information
+    #print(f"Retrieved personality traits from FAISS: {retrieved_personality}")
+
+    # Combiner la description initiale avec les résultats de FAISS pour créer une personnalité complète
+    #complete_personality = short_persona + " " + retrieved_personality + tokenizer.eos_token
+
+
+
+    #def query_reference_dialogs_faiss(query, index, k=20):
+    # Convertir la description courte en vecteur
+    #query_embedding = embedding_model.encode([query])   # Fonction qui convertit le texte en vecteur
+    # Rechercher dans l'index FAISS des personnalités
+    #distances, indices = index.search(query_embedding, k)
+    
+    # Récupérer les traits de personnalité correspondants
+    #retrieved_reference_dialogs_data = list(set([df['Text'][idx] for idx in indices[0]])) 
+
+    #print(retrieved_reference_dialogs_data)
+    #return retrieved_reference_dialogs_data
