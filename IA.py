@@ -79,7 +79,7 @@ def display_dialog_history(dialog_hx):
 
 #===============
 
-def query_reference_dialogs_faiss(query, index, k=20):
+def query_reference_dialogs_faiss(query, index, k=5):
 # Convertir la description courte en vecteur
     query_embedding = embedding_model.encode([query])   # Fonction qui convertit le texte en vecteur
     
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     emotion = input("How your NPC is feeling ? (ex: 'Sad,Stressed,Happy')\n>> ") 
     context = input("What is the context of the actual situation ? (ex: 'He sells potions in a black market')\n>> ") 
     action = input("How should act or is acting the NPC ? (ex: 'he must be distrustful of new clients')\n>> ") 
-    time_context = input("In which environnement does the NPC evolve (ex : 'It is night in the village, and most people are asleep.')")
+    time_context = input("In which environnement does the NPC evolve (ex : 'It is night in the village, and most people are asleep.')\n")
 
     query = f"{short_persona} {name} {emotion} {context} {action} {time_context}"
 
@@ -183,6 +183,8 @@ if __name__ == "__main__":
     
         # Afficher la réponse
         print("NPC : {}".format(tokenizer.decode(msg, skip_special_tokens=True)))
+
+
 
 
 
