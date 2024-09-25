@@ -4,6 +4,7 @@ import torch
 import sys
 import faiss
 import numpy as np
+import pandas as pd
 
 tokenizer = GPT2Tokenizer.from_pretrained("af1tang/personaGPT")
 model = GPT2LMHeadModel.from_pretrained("af1tang/personaGPT")
@@ -13,26 +14,47 @@ embedding_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = model.to(device)
 
-def flatten(lst):
-    return [item for sublist in lst for item in sublist]
+#Récupère le fichier et charge l'index FAISS de personnalité
+faiss_index_file = "faiss_index.index"
+personality_index = faiss.read_index(faiss_index_file)
 
-def generate_next(bot_input_ids, top_k, top_p,temperature,max_length=1000, do_sample=True, pad_token=tokenizer.eos_token_id):
-    # Create an attention mask
+# Lire le fichier CSV
+df = pd.read_csv('npc-dataset.csv')
+# Recréer la variable documents
+documents = (df['Text']).tolist()
+
+#Recréer la variable documents en incluant tous les champs
+#documents = df[['Title', 'Objective', 'Text']].astype(str).agg(' '.join, axis=1).tolist()
+
+
+#Récupère le fichier et charge l'index FAISS de réplique
+faiss_index_file = "faiss_index.index"
+interaction_index = faiss.read_index(faiss_index_file)
+
+# fonction qui permet de transformer en une seule liste plusieurs liste
+flatten = lambda l: [item for sublist in l for item in sublist]
+
+def generate_next(bot_input_ids, top_k, top_p, temperature, max_length=1000, do_sample=True, pad_token=tokenizer.eos_token_id):
+    # Créer un masque d'attention
     attention_mask = bot_input_ids.ne(tokenizer.pad_token_id).long()
 
-    # Pass the attention mask to the generate function
+    # Passer le masque d'attention à la fonction de génération
     full_msg = model.generate(
-        bot_input_ids, 
+        bot_input_ids,
         attention_mask=attention_mask,
-        do_sample=do_sample, 
-        top_k=top_k, 
-        top_p=top_p, 
+        do_sample=do_sample,
+        top_k=top_k,
+        top_p=top_p,
         temperature=temperature,
-        max_length=max_length, 
+        max_length=max_length,
         pad_token_id=pad_token
     )
 
-    msg = tokenizer.decode(full_msg[0], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+    # Vérifier le contenu de full_msg
+    print(f"Full message output (raw): {full_msg}")
+
+    # Décoder en s'assurant que nous avons une liste
+    msg = tokenizer.decode(full_msg[0].tolist(), skip_special_tokens=True, clean_up_tokenization_spaces=True)
     return msg
 
 #Utility
@@ -59,26 +81,25 @@ def display_dialog_history(dialog_hx):
             print("> Your Npc: "+msg)
             print()
 
-#FAISS
-# Charger l'index FAISS
-def load_faiss_index(index_file):
-    index = faiss.read_index(index_file)
-    return index
+def query_personality_faiss(short_persona, personality_index, k=5):
+    # Convertir la description courte en vecteur
+    short_persona_embedding = embedding_model.encode([short_persona])   # Fonction qui convertit le texte en vecteur
+    # Rechercher dans l'index FAISS des personnalités
+    distances, indices = personality_index.search(short_persona_embedding, k)
+    
+    # Récupérer les traits de personnalité correspondants
+    retrieved_personality_data = list(set([df['Text'][idx] for idx in indices[0]]))  # Assurez-vous que retrieve_from_index est défini
+    return retrieved_personality_data
 
-# Rechercher les contextes pertinents en fonction du prompt utilisateur
-def search_index(index, query, embedding_model, texts, top_k=5):
-     # Encode la querry pour obtenir l'embedding
-    query_embedding = embedding_model.encode([query])  
-    distances, indices = index.search(np.array(query_embedding), top_k)
+def query_interaction_faiss(user_query, interaction_index, k=5):
+    # Convertir la requête utilisateur en vecteur
+    user_query_embedding = embedding_model.encode([user_query])  # Fonction qui convertit le texte en vecteur
+    # Rechercher dans l'index FAISS des interactions
+    distances, indices = interaction_index.search(user_query_embedding, k)
     
-    # Vérifie si les indices existent ou s'il y a une relation
-    if len(indices) == 0 or len(indices[0]) == 0:
-        print("No results found for the query.")
-        return [], []
-    
-    # Récupère le texte si un résultat est trouvé
-    results = [texts[i] for i in indices[0] if i < len(texts)]  # Ensure index is within bounds
-    return results, distances[0]
+    # Récupérer les dialogues ou interactions correspondants
+    retrieved_interaction_data = list(set([df['Text'][idx] for idx in indices[0]]))  # Assurez-vous que retrieve_from_index est défini
+    return retrieved_interaction_data
 
 
 # Main
@@ -106,41 +127,55 @@ if __name__ == "__main__":
         top_p = 0.95
         temperature = 0.7
         print("NPC set to Precise level.")
-    
-    #Récupère le fichier
-    faiss_index_file = "faiss_index.index"
-    # Charger l'index FAISS
-    index = load_faiss_index(faiss_index_file)
 
-    contexts = [] 
-    n_contexts = int(input("How many personality or contextual facts do you want to provide? Enter -1 for Default(3): "))
-    if n_contexts == -1:
-        n_contexts = 3
-    for i in range(n_contexts):
-        context = input(">> Context/Fact %d: " % (i + 1))
-        contexts.append(context)
+    # get personality traits for the conversation
+    personas = []
+    # L'utilisateur donne une brève description de la personnalité du PNJ
+    short_persona = input(">> Donne une brève description du PNJ (par ex. 'marchand avide et suspicieux'): ") + tokenizer.eos_token
+    # Interroger FAISS pour récupérer des traits de personnalité
+    #retrieved_personality_data = query_personality_faiss(short_persona, personality_index)  # faiss_personality_index est ton index FAISS des personnalités
+    #retrieved_personality = ' '.join(retrieved_personality_data)  # Combiner les résultats en une seule chaîne de caractères
+
+    # Afficher les résultats récupérés pour information
+    #print(f"Retrieved personality traits from FAISS: {retrieved_personality}")
+
+    # Combiner la description initiale avec les résultats de FAISS pour créer une personnalité complète
+    #complete_personality = short_persona + " " + retrieved_personality + tokenizer.eos_token
+
+    # Encoder la personnalité complète
+    #personas = tokenizer.encode(''.join(['<|p2|>'] + [complete_personality] + ['<|sep|>'] + ['<|start|>']))
+    personas.append(short_persona)
+    personas = tokenizer.encode(''.join(['<|p2|>'] + personas + ['<|sep|>'] + ['<|start|>']))
 
     dialog_hx = []  # Initialiser l'historique des dialogues
 
     while True:
-        user_inp = input(">> User: ")
-        # Recherche de contextes pertinents et combine en une seule chaîne
-        results, _ = search_index(index, user_inp, embedding_model, contexts, top_k=5)
-        context = ' '.join(results)
-
-        # Encoder l'entrée de l'utilisateur avec le contexte
-        if len(dialog_hx) == 0:
-            full_input = ['<CONTEXT> ' + ''.join(contexts)] + ['<USER> ' + user_inp]
-        else:
-            full_input = flatten(['<USER> ' + user_inp] + ['<NPC> ' + response for response in dialog_hx])
+        user_inp = input(">> User: ") + tokenizer.eos_token
+        user_inp_encoded = tokenizer.encode(user_inp)
     
-        bot_input_ids = tokenizer.encode(''.join(full_input), return_tensors='pt').to(device)
-        # Générer une réponse
+        # Append to the chat history
+        dialog_hx.append(user_inp_encoded)
+
+        # ---- Ajout de la partie RAG pour interroger le dataset d'interactions ----
+        # Utiliser la requête de l'utilisateur pour interroger FAISS
+        retrieved_interaction_data = query_interaction_faiss(user_inp, interaction_index)  # faiss_interaction_index est ton index FAISS des interactions
+        retrieved_context = ' '.join(retrieved_interaction_data)  # Combiner les résultats en une seule chaîne de caractères
+
+        # Afficher le contexte récupéré pour information
+        #print(f"Retrieved context from FAISS: {retrieved_context}")
+
+        # Ajouter les résultats FAISS au contexte du dialogue
+        personas_and_context = personas + tokenizer.encode(retrieved_context + tokenizer.eos_token)
+
+        # Limiter l'historique de la conversation à 1000 tokens
+        bot_input_ids = to_var([personas_and_context + flatten(dialog_hx)]).long()
+    
+        # Générer la réponse avec le modèle PersonaGPT
         msg = generate_next(bot_input_ids, top_k, top_p, temperature)
         dialog_hx.append(msg)
-
-        print("> Your Npc: {}".format(msg))
-
+    
+        # Afficher la réponse
+        print("Bot: {}".format(tokenizer.decode(msg, skip_special_tokens=True)))
 
 
 
@@ -180,3 +215,4 @@ if __name__ == "__main__":
 # Sauvegarder le tokenizer et le modèle localement
 #tokenizer.save_pretrained('./local_model/tokenizer')  # Sauvegarde le tokenizer
 #model.save_pretrained('./local_model/model')  # Sauvegarde le modèle
+
